@@ -1,0 +1,172 @@
+import numpy as np
+import heapq
+import os
+from scipy.sparse import lil_matrix
+
+# Venta y Distribución de Asientos en el Avión: ordenación externa mediante algoritmo de ordenamiento por fusión externa.
+
+class Pasajero:
+    def __init__(self, nombre, genero, asiento, boleto, clase, horario, tipo_pasajero):
+        self.nombre = nombre
+        self.genero = genero
+        self.asiento = asiento
+        self.boleto = boleto
+        self.fecha_de_vuelo = "2024-09-12"
+        self.destino = "Miami"
+        self.clase = clase
+        self.horario = horario
+        self.tipo_pasajero = tipo_pasajero
+        self.precio = None
+
+    def __str__(self) -> str:
+        return f"{self.nombre}, {self.genero}, Asiento: {self.asiento}, Boleto: {self.boleto}, Fecha: {self.fecha_de_vuelo}, Destino: {self.destino}, Precio: ${self.precio}"
+
+# Precios de vuelo por clase y horario
+precios_miami = {
+    'Económica': {
+        'Pico': {'Adulto': 400, 'Niño': 300},
+        'No Pico': {'Adulto': 350, 'Niño': 250}
+    },
+    'Premium': {
+        'Pico': {'Adulto': 600, 'Niño': 500},
+        'No Pico': {'Adulto': 550, 'Niño': 450}
+    }
+}
+
+def obtener_precio_vuelo(clase, horario, tipo_pasajero):
+    try:
+        return precios_miami[clase][horario][tipo_pasajero]
+    except KeyError:
+        print(f"Error: No hay precios definidos para {clase}, {horario}, {tipo_pasajero}")
+        return None
+
+filas = 8
+columnas = 7
+asientos = [[None for _ in range(columnas)] for _ in range(filas)]
+
+precios_por_fila = {0: 10, 1: 8, 2: 8, 3: 6, 4: 6, 5: 5, 6: 5, 7: 5}
+ajuste_por_columna = {0: 1, 6: 1, 3: -1}
+
+def obtener_precio_asiento(fila, columna):
+    precio_base = precios_por_fila[fila]
+    ajuste = ajuste_por_columna.get(columna, 0)
+    return precio_base + ajuste
+
+# Matriz antisimétrica y simétrica
+matriz_anti_simetrica = np.array([
+    [0, 1, -1],
+    [-1, 0, 1],
+    [1, -1, 0]
+])
+
+matriz_simetrica = np.array([
+    [1, 0.5, 0.5],
+    [0.5, 1, 0.5],
+    [0.5, 0.5, 1]
+])
+
+def ajustar_precio_por_anti_simetria(fila, columna):
+    if 0 <= fila < 3 and 0 <= columna < 3:
+        return matriz_anti_simetrica[fila, columna]
+    else:
+        return 0
+
+def ajustar_precio_por_simetria(fila, columna):
+    if 0 <= fila < 3 and 0 <= columna < 3:
+        return matriz_simetrica[fila, columna]
+    else:
+        return 1
+
+def asignar_asiento(fila, columna, pasajero):
+    if 0 <= fila < filas and 0 <= columna < columnas:
+        if asientos[fila][columna] is None:
+            precio_asiento = obtener_precio_asiento(fila, columna)
+            ajuste_anti_simetria = ajustar_precio_por_anti_simetria(fila, columna)
+            precio_asiento += ajuste_anti_simetria
+            ajuste_simetrico = ajustar_precio_por_simetria(fila, columna)
+            precio_asiento *= ajuste_simetrico
+
+            precio_vuelo = obtener_precio_vuelo(pasajero.clase, pasajero.horario, pasajero.tipo_pasajero)
+            if precio_vuelo is not None:
+                pasajero.precio = precio_asiento + precio_vuelo
+                pasajero.asiento = f"{fila+1}{chr(65 + columna)}"
+                asientos[fila][columna] = pasajero
+
+                # Guardar detalles del pasajero para ordenación
+                with open("asientos_sin_ordenar.txt", "a") as archivo:
+                    archivo.write(f"{pasajero.nombre},{pasajero.asiento},{pasajero.precio}\n")
+            else:
+                print("No se pudo calcular el precio del vuelo.")
+        else:
+            print(f"Error: El asiento {fila+1}{chr(65 + columna)} ya está ocupado.")
+    else:
+        print(f"Error: Fila {fila+1} o columna {chr(65 + columna)} fuera del rango.")
+
+def mostrar_asientos():
+    for fila in range(filas):
+        fila_asientos = []
+        for columna in range(columnas):
+            if asientos[fila][columna]:
+                fila_asientos.append(f"Asiento {fila+1}{chr(65 + columna)}: {asientos[fila][columna].nombre}, Precio: ${asientos[fila][columna].precio}")
+            else:
+                fila_asientos.append(f"Asiento {fila+1}{chr(65 + columna)}: Vacío")
+        print(" | ".join(fila_asientos))
+
+# Fusión Externa - División en Bloques
+def dividir_y_ordenar(archivo_entrada, tamano_bloque=1000):
+    bloques_temporales = []
+    with open(archivo_entrada, 'r') as archivo:
+        while True:
+            bloque = []
+            for _ in range(tamano_bloque):
+                linea = archivo.readline()
+                if not linea:
+                    break
+                bloque.append(linea.strip())
+            if not bloque:
+                break
+            bloque.sort()
+            nombre_bloque = f"temp_{len(bloques_temporales)}.txt"
+            with open(nombre_bloque, 'w') as archivo_bloque:
+                archivo_bloque.write("\n".join(bloque))
+            bloques_temporales.append(nombre_bloque)
+    return bloques_temporales
+
+# Fusión de Bloques Ordenados
+def fusionar_archivos(bloques_temporales, archivo_salida):
+    archivos_bloque = [open(bloque, 'r') for bloque in bloques_temporales]
+    heap = []
+    for i, archivo in enumerate(archivos_bloque):
+        linea = archivo.readline().strip()
+        if linea:
+            heapq.heappush(heap, (linea, i))
+
+    with open(archivo_salida, 'w') as salida:
+        while heap:
+            menor, i = heapq.heappop(heap)
+            salida.write(menor + "\n")
+            siguiente = archivos_bloque[i].readline().strip()
+            if siguiente:
+                heapq.heappush(heap, (siguiente, i))
+
+    for archivo in archivos_bloque:
+        archivo.close()
+    for bloque in bloques_temporales:
+        os.remove(bloque)
+
+def generar_archivo_asientos_ordenados():
+    bloques_temporales = dividir_y_ordenar("asientos_sin_ordenar.txt", tamano_bloque=1000)
+    fusionar_archivos(bloques_temporales, "asientos_ordenados.txt")
+
+# Ejemplo de uso
+pasajero1 = Pasajero("Maria J", "F", "7C", "C", "Económica", "Pico", "Adulto")
+pasajero2 = Pasajero("Juan P", "M", "1A", "B", "Premium", "No Pico", "Niño")
+
+asignar_asiento(6, 2, pasajero1)
+asignar_asiento(0, 0, pasajero2)
+
+print("\nAsientos del avión:")
+mostrar_asientos()
+
+generar_archivo_asientos_ordenados()
+print("\nArchivo de asientos ordenados generado: 'asientos_ordenados.txt'")
